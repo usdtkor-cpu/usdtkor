@@ -225,3 +225,199 @@ function drawBackground(time){
 }
 
 function drawFX(dt){
+  fxx.clearRect(0,0,W,H);
+  // 더스트 파티클
+  for(let p=particles.length-1;p>=0;p--){
+    const pt=particles[p];
+    pt.age += dt*1000; pt.x += pt.vx; pt.y += pt.vy;
+    const life = Math.max(0,1 - pt.age/pt.life);
+    fxx.globalAlpha = life*0.7;
+    fxx.fillStyle = pt.color;
+    fxx.beginPath(); fxx.arc(pt.x, pt.y, 1.5+2*(1-life), 0, Math.PI*2); fxx.fill();
+    if(pt.age>=pt.life) particles.splice(p,1);
+  }
+  fxx.globalAlpha=1;
+}
+
+// ===== 상태/카메라/물리 =====
+let gamePhase="betting"; // betting → racing → finished
+let startRaceAt=0;
+let winnerIdx=null;
+let last=performance.now();
+
+function updateMeta(){
+  const now = Math.floor(Date.now()/1000);
+  const remain = BETTING_SEC - (now - startTime);
+  if(remain>0){
+    gamePhase="betting";
+    const m=Math.floor(remain/60), s=remain%60;
+    meta.textContent=`제${raceId}경기 베팅 오픈 • ${m}:${String(s).padStart(2,"0")} 남음`;
+  }else if(remain<=0 && remain>-RACE_SEC){
+    if(gamePhase!=="racing"){
+      gamePhase="racing";
+      startRaceAt = Date.now();
+      doCountdown(); stage.classList.add("rumble");
+      setTimeout(()=>stage.classList.remove("rumble"), 900);
+    }else{
+      const sec = Math.min(RACE_SEC, Math.floor((Date.now()-startRaceAt)/1000)+1);
+      meta.textContent=`제${raceId}경기 LIVE • ${sec}초`;
+    }
+  }else{
+    if(gamePhase!=="finished"){
+      gamePhase="finished";
+      photo.classList.add("hidden");
+      winnerIdx = leaderIndex();
+      spawnConfetti();
+    }
+    meta.textContent=`제${raceId}경기 종료 (공식 결과는 채널 메시지 참조)`;
+  }
+}
+
+function leaderIndex(){ let b=-1,idx=0; pos.forEach((p,i)=>{ if(p>b){b=p;idx=i;} }); return idx; }
+
+function stepPhysics(dt){
+  const t = (Date.now()-startRaceAt)/1000;
+  const slow = (RACE_SEC - t) < 2 ? 0.6 : 1.0; // 마지막 2초 슬로모션
+  for(let i=0;i<lanes;i++){
+    // 버스트(스프린트) 트리거
+    if(!bursts[i].on && (Math.abs(t-bursts[i].t1)<.05 || Math.abs(t-bursts[i].t2)<.05)){
+      bursts[i].on=true; bursts[i].left=0.55+Math.random()*0.6;
+    }
+    let boost=0;
+    if(bursts[i].on){
+      bursts[i].left-=dt; boost = 0.8 + Math.random()*0.5;
+      if(bursts[i].left<=0) bursts[i].on=false;
+      // 발굽 강한 소리
+      if (audioInited && Math.random()<.35) thump(.45, 80+Math.random()*40);
+    }
+
+    // 피로+노이즈
+    const fatigue = Math.max(0, t/18);
+    vel[i] += (velBase[i] - vel[i]) * 0.02;
+    const noise = (Math.random()-0.5)*0.4;
+    const v = Math.max(1.1, vel[i] + noise - fatigue + boost);
+
+    // 이동
+    pos[i] = Math.min(finishX, pos[i] + v*(dt*12)*slow);
+
+    // 다리 위상: 속도 비례
+    phase[i] += dt * (6 + v*0.7);
+    if(phase[i]>Math.PI*2) phase[i]-=Math.PI*2;
+
+    // 더스트
+    if (Math.random()<.6) addDust(pos[i], Math.floor(i*laneH + laneH/2), horses[i].color);
+  }
+
+  // 포토피니시 알림
+  const nearFinish = Math.max(...pos.map(p=>finishX-p)) < 44 && gamePhase==="racing";
+  photo.classList.toggle("hidden", !nearFinish);
+
+  // 오디오 믹스(선두 속도로 볼륨)
+  const leader = leaderIndex();
+  const normSpeed = Math.min(1, (vel[leader]-1.1)/2.2);
+  updateMix(normSpeed);
+}
+
+function drawScene(ts, dt){
+  drawBackground(ts);
+
+  // 카메라: 선두 추적 + 약간의 줌
+  const lead = leaderIndex();
+  const leadX = pos[lead];
+  cam.target = Math.min(Math.max(leadX - W*0.55, 0), Math.max(finishX - W*0.66, 0));
+  cam.x += (cam.target - cam.x)*0.06;
+
+  const nearFinish = Math.max(...pos.map(p=>finishX-p)) < 44 && gamePhase==="racing";
+  const targetZoom = nearFinish ? 1.06 : 1.0;
+  cam.zoom += (targetZoom - cam.zoom)*0.05;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(-cam.x,0);
+  ctx.scale(cam.zoom,cam.zoom);
+
+  // 말 + 모션블러
+  for(let i=0;i<lanes;i++){
+    const y = Math.floor(i*laneH + laneH/2);
+    // 트레일
+    const trailAlpha = 0.10 + Math.min(0.35, vel[i]*0.04);
+    ctx.globalAlpha = trailAlpha;
+    for(let t=6;t>=1;t--){
+      drawHorseVector(pos[i]-t*vel[i]*1.6, y, horses[i].color, horses[i].emoji, phase[i]-t*0.2, .98);
+    }
+    ctx.globalAlpha = 1;
+    drawHorseVector(pos[i], y, horses[i].color, horses[i].emoji, phase[i], 1.0);
+  }
+  ctx.restore();
+
+  drawFX(dt);
+}
+
+// ===== 스타트 카운트다운/GO =====
+function doCountdown(){
+  cdBox.classList.remove("hidden"); cdBox.textContent="3";
+  setTimeout(()=>cdBox.textContent="2", 350);
+  setTimeout(()=>cdBox.textContent="1", 700);
+  setTimeout(()=>{
+    cdBox.classList.add("go"); cdBox.textContent="GO!";
+    toast("출발!"); if (initAudioIfNeeded()) { hoofGain.gain.value=0.06; thump(.5,90); }
+    setTimeout(()=>{ cdBox.classList.add("hidden"); cdBox.classList.remove("go");}, 450);
+  }, 1050);
+}
+
+// ===== 콘페티 =====
+function spawnConfetti(){
+  confettiBox.classList.remove("hidden");
+  confettiBox.innerHTML="";
+  for(let i=0;i<90;i++){
+    const c=document.createElement("div");
+    c.style.position="absolute";
+    c.style.left=(Math.random()*100)+"%";
+    c.style.top=(-10-Math.random()*30)+"px";
+    c.style.width="6px"; c.style.height="10px";
+    c.style.borderRadius="2px";
+    c.style.background=`hsl(${Math.random()*360}deg 90% 60%)`;
+    c.style.opacity=".9";
+    c.style.transform=`rotate(${Math.random()*360}deg)`;
+    c.style.animation=`fall ${2+Math.random()*1.8}s linear ${Math.random()*0.7}s forwards`;
+    confettiBox.appendChild(c);
+  }
+}
+
+// ===== 루프 =====
+let lastTs = performance.now();
+function loop(ts){
+  const dt = Math.min(0.05, (ts-lastTs)/1000); lastTs=ts;
+
+  updateMeta();
+  if (gamePhase==="racing") stepPhysics(dt);
+  drawScene(ts, dt);
+
+  if (gamePhase==="finished" && confettiBox.classList.contains("hidden")) {
+    spawnConfetti();
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ===== 전송/토스트 =====
+function toast(msg){ statusEl.textContent=msg; }
+
+function sendData(obj){
+  if(!tg){ alert("브라우저에서 열림: "+JSON.stringify(obj)); return; }
+  obj.init_data = initData;               // 서버 서명검증용
+  tg.sendData(JSON.stringify(obj));
+  tg.HapticFeedback?.impactOccurred("soft");
+}
+
+function sendBet(horseIndex){
+  const now = Math.floor(Date.now()/1000);
+  if(now-startTime >= BETTING_SEC){ toast("베팅 마감"); tg?.HapticFeedback?.notificationOccurred("error"); return; }
+  if(!raceToken){ toast("레이스 토큰 누락(관리자에게 문의)"); return; }
+  const h=horses[horseIndex];
+  sendData({ action:"bet", race_id:raceId, horse:horseIndex, race_token:raceToken });
+  toast(`보냄: 제${raceId}경기 ${h.emoji} ${h.name} 베팅`);
+}
+
+// 초기 안내
+toast(`제${raceId}경기 • 베팅 또는 관전 가능`);
