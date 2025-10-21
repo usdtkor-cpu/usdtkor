@@ -1,99 +1,35 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="ko">
 <head>
-    <title>Graph Crash Game</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style> body { margin: 0; background: #000; color: white; font-family: Arial; } canvas { display: block; } #ui { position: absolute; top: 10px; left: 10px; } button { padding: 10px; background: #4CAF50; color: white; border: none; cursor: pointer; } </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>파라존 경마 LIVE</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-    <canvas id="canvas" width="400" height="600"></canvas>
-    <div id="ui">
-        <p>배수: <span id="multiplier">1.00x</span></p>
-        <p>베팅: <input type="number" id="bet" value="1" min="0.01"> USDT</p>
-        <button id="betBtn">베팅</button>
-        <button id="cashout" disabled>캐시아웃</button>
-        <p id="status">베팅 대기 중...</p>
+  <header>
+    <h1>🏇 파라존 경마 LIVE</h1>
+    <div id="raceMeta"></div>
+  </header>
+
+  <main>
+    <canvas id="track" width="360" height="240"></canvas>
+
+    <div class="odds">
+      <div class="odds-row" id="oddsRow"></div>
     </div>
-    <script>
-        const tg = window.Telegram.WebApp;
-        tg.ready();
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const multiplierEl = document.getElementById('multiplier');
-        const betEl = document.getElementById('bet');
-        const betBtn = document.getElementById('betBtn');
-        const cashoutBtn = document.getElementById('cashout');
-        const statusEl = document.getElementById('status');
 
-        let gameRunning = false;
-        let multiplier = 1.0;
-        let crashPoint = 0; // 랜덤 크래시 포인트 (시뮬: 1.1 ~ 10x)
-        let interval;
+    <div class="controls">
+      <div class="bet-buttons" id="betButtons"></div>
+      <button id="scoreBtn" class="ghost">📊 내 점수 보기</button>
+    </div>
+  </main>
 
-        // 그래프 그리기 (상승 곡선)
-        function drawGraph() {
-            ctx.clearRect(0, 0, 400, 600);
-            const graphHeight = 400;
-            const x = Date.now() % 400; // 움직이는 그래프
-            const y = graphHeight - (multiplier * 50); // 배수만큼 상승
-            ctx.strokeStyle = gameRunning ? '#4CAF50' : '#666';
-            ctx.beginPath();
-            ctx.moveTo(0, graphHeight);
-            ctx.lineTo(400, y);
-            ctx.stroke();
-            // 크래시 표시
-            if (!gameRunning && multiplier >= crashPoint) {
-                ctx.fillStyle = 'red';
-                ctx.beginPath();
-                ctx.arc(200, y, 10, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-        }
+  <footer>
+    <div id="status">연결 준비...</div>
+  </footer>
 
-        // 게임 시작
-        betBtn.addEventListener('click', () => {
-            const bet = parseFloat(betEl.value);
-            if (bet > 0) {
-                crashPoint = 1 + Math.random() * 9; // 랜덤 크래시 1.1~10x
-                multiplier = 1.0;
-                gameRunning = true;
-                betBtn.disabled = true;
-                cashoutBtn.disabled = false;
-                statusEl.textContent = '그래프 상승 중... 캐시아웃 타이밍 잡아!';
-                tg.HapticFeedback.impactOccurred('medium');
-
-                interval = setInterval(() => {
-                    multiplier += 0.1; // 배수 증가 속도
-                    multiplierEl.textContent = multiplier.toFixed(2) + 'x';
-                    drawGraph();
-                    if (multiplier >= crashPoint) {
-                        gameRunning = false;
-                        clearInterval(interval);
-                        cashoutBtn.disabled = true;
-                        betBtn.disabled = false;
-                        statusEl.textContent = `크래시! 포인트: ${crashPoint.toFixed(2)}x (공정 해시: ${Math.random().toString(36).substring(7)})`;
-                        // 실제론 여기서 베팅 결과 처리 (서버 API 호출)
-                    }
-                }, 100); // 0.1초마다 업데이트
-            }
-        });
-
-        // 캐시아웃
-        cashoutBtn.addEventListener('click', () => {
-            if (gameRunning) {
-                gameRunning = false;
-                clearInterval(interval);
-                const bet = parseFloat(betEl.value);
-                const win = bet * multiplier;
-                statusEl.textContent = `캐시아웃 성공! 수익: ${win.toFixed(2)} USDT`;
-                cashoutBtn.disabled = true;
-                betBtn.disabled = false;
-                tg.showAlert(`승리! ${win.toFixed(2)} USDT 획득!`);
-                // 실제론 TON 지갑으로 전송
-            }
-        });
-
-        drawGraph(); // 초기 렌더
-    </script>
+  <script src="script.js"></script>
 </body>
 </html>
